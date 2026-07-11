@@ -1,17 +1,16 @@
+server:
+  port: 8080          # each concept gets its own port so several can run at once
+
 spring:
-  application:
-    name: idempotency
   datasource:
     url: jdbc:postgresql://localhost:5432/idempotency
-    username: idempotency
-    password: idempotency
+    username: se
+    password: se
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: update      # dev only
+    show-sql: true
   data:
     redis:
       host: localhost
       port: 6379
-
-server:
-  port: 8080
