@@ -7,7 +7,7 @@ complete isolation.
 ## Concepts
 | # | Concept | Folder | Port | Status |
 |---|---------|--------|------|--------|
-| 1 | Idempotency | [`idempotency/`](./idempotency) | 8080 | 🚧 in progress |
+| 1 | Idempotency | [`idempotency/`](./idempotency) | 8080 | ✅ done |
 
 ## Run a single concept
 ```bash

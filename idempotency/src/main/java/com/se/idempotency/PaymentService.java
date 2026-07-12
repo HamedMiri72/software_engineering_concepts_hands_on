@@ -14,30 +14,40 @@ public class PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
+    private final IdempotencyCache idempotencyCache;
 
     @Transactional
     public Payment pay(String toAccount, long amountCents, String idempotencyKey){
 
-        var existingKey = idempotencyKeyRepository.findByKeyValue(idempotencyKey);
+       if(!idempotencyCache.claim(idempotencyKey)){
+           var seen = idempotencyKeyRepository.findByKeyValue(idempotencyKey);
+           if(seen.isPresent()){
+               return paymentRepository.findById(seen.get().getPaymentId())
+                       .orElseThrow(() -> new IllegalStateException(
+                               "Idempotency key points to a missing payment"));
+           }
+       }
 
-        if(existingKey.isPresent()){
-            var originalPaymentId = existingKey.get().getPaymentId();
-            return paymentRepository.findById(originalPaymentId)
-                    .orElseThrow(() -> new IllegalStateException("Idempotency key points to a payment that no longer exists"));
+        var existing = idempotencyKeyRepository.findByKeyValue(idempotencyKey);
+        if (existing.isPresent()) {
+            return paymentRepository.findById(existing.get().getPaymentId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Idempotency key points to a missing payment"));
         }
 
         Payment payment = Payment.builder()
-                .amountCents(amountCents)
                 .toAccount(toAccount)
+                .amountCents(amountCents)
                 .build();
 
         paymentRepository.save(payment);
+
         idempotencyKeyRepository.save(IdempotencyKey.builder()
-                        .keyValue(idempotencyKey)
                         .paymentId(payment.getId())
+                        .keyValue(idempotencyKey)
                 .build());
 
-        return payment;
+       return payment;
     }
 
 }

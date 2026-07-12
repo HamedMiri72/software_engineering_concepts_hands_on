@@ -11,6 +11,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 
 import java.util.UUID;
+import java.util.concurrent.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -74,6 +75,55 @@ public class PaymentControllerTest {
         return new HttpEntity<>(request, headers);
     }
 
+    @Test
+    void sameKeyFiredSimultaneously_shouldCreateOnlyOnePayment() throws InterruptedException{
+
+        String account = "acc_" + System.nanoTime();
+
+        String url = "http://localhost:" + port + "/api/v1/payments";
+
+        String key = UUID.randomUUID().toString();
+
+        var request = new PaymentController.PaymentRequest(account, 500);
+
+        HttpEntity<PaymentController.PaymentRequest> entity = withKey(request, key);
+
+        // A "starting gate": both threads wait here until we open it, so they
+        // fire as close to the exact same instant as we can arrange.
+
+        CountDownLatch startGate = new CountDownLatch(1);
+
+        CountDownLatch finishLine = new CountDownLatch(2);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+
+        Runnable fireOneRequest = () -> {
+            try {
+                startGate.await();                 // wait at the gate
+                http.exchange(url, HttpMethod.POST, entity, Payment.class);
+            } catch (Exception ignored) {
+                // a request may fail under the race — that's fine, we count DB rows below
+            } finally {
+                finishLine.countDown();            // I'm done
+            }
+        };
+
+        pool.submit(fireOneRequest);
+        pool.submit(fireOneRequest);
+
+        startGate.countDown();                     // OPEN THE GATE — both fire together
+        finishLine.await(10, TimeUnit.SECONDS);    // wait for both to finish
+        pool.shutdown();
+
+        long count = paymentRepository.countByToAccount(account);
+
+        assertThat(count).isEqualTo(1);
+
+
+
+
+
+    }
 
 
 }
