@@ -13,13 +13,29 @@ public class PaymentService {
 
 
     private final PaymentRepository paymentRepository;
+    private final IdempotencyKeyRepository idempotencyKeyRepository;
 
-    public Payment pay(String toAccount, long amountCents){
+    @Transactional
+    public Payment pay(String toAccount, long amountCents, String idempotencyKey){
+
+        var existingKey = idempotencyKeyRepository.findByKeyValue(idempotencyKey);
+
+        if(existingKey.isPresent()){
+            var originalPaymentId = existingKey.get().getPaymentId();
+            return paymentRepository.findById(originalPaymentId)
+                    .orElseThrow(() -> new IllegalStateException("Idempotency key points to a payment that no longer exists"));
+        }
+
         Payment payment = Payment.builder()
-                .toAccount(toAccount)
                 .amountCents(amountCents)
+                .toAccount(toAccount)
                 .build();
+
         paymentRepository.save(payment);
+        idempotencyKeyRepository.save(IdempotencyKey.builder()
+                        .keyValue(idempotencyKey)
+                        .paymentId(payment.getId())
+                .build());
 
         return payment;
     }

@@ -4,10 +4,7 @@ package com.se.idempotency;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/payments")
@@ -18,9 +15,10 @@ public class PaymentController {
     private final PaymentService paymentService;
 
     @PostMapping()
-    public ResponseEntity<Payment> pay(@RequestBody PaymentRequest paymentRequest){
+    public ResponseEntity<Payment> pay(@RequestBody PaymentRequest paymentRequest,
+                                       @RequestHeader("idempotency_key") String idempotencyKey){
 
-        Payment payment = paymentService.pay(paymentRequest.toAccount(), paymentRequest.amountCents());
+        Payment payment = paymentService.pay(paymentRequest.toAccount(), paymentRequest.amountCents(), idempotencyKey);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(payment);
     }
