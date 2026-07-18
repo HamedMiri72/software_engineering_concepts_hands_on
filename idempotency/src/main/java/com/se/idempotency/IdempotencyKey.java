@@ -2,7 +2,6 @@ package com.se.idempotency;
 
 
 import jakarta.persistence.*;
-import jakarta.websocket.server.ServerEndpoint;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;

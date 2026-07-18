@@ -1,6 +1,5 @@
 package com.se.idempotency;
 
-import org.aspectj.apache.bcel.generic.RET;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -19,7 +18,7 @@ public class IdempotencyCache {
 
     public boolean claim(String idempotencyKey){
         boolean firstToClaim = redisTemplate.opsForValue()
-                .setIfAbsent("idempotenct:" + idempotencyKey, "1", TTL);
+                .setIfAbsent("idempotency:" + idempotencyKey, "1", TTL);
 
         return Boolean.TRUE.equals(firstToClaim);
     }
