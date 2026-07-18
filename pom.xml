@@ -13,5 +13,6 @@
 
     <modules>
         <module>idempotency</module>
+        <module>concurrency</module>
     </modules>
 </project>
