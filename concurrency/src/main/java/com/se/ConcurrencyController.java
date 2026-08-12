@@ -80,5 +80,68 @@ public class ConcurrencyController {
         return out + "\nTOTAL TIME: " + elapsed + " ms\n";
     }
 
+    // Shared, unguarded state. Multiple threads read-modify-write this
+    // without any synchronization, so updates can be lost.
+    private int unsafeCount = 0;
+
+    // "current + 1" is really three separate steps: read unsafeCount, compute
+    // current + 1, write it back. The Thread.sleep(1) here just widens the
+    // window between the read and the write, making the race easy to see —
+    // two threads can both read the same "current" value before either
+    // writes back, so one of their increments gets silently overwritten.
+    private void incrementUnsafe(){
+        int current = unsafeCount;
+
+        try{
+            Thread.sleep(1);
+        }catch (InterruptedException ex){
+            Thread.currentThread().interrupt();
+        }
+        unsafeCount = current + 1;
+    }
+
+    @GetMapping("/race")
+    public String race() throws InterruptedException{
+
+        unsafeCount = 0;
+
+        int tasks = 1000;
+
+        // 50 threads hammering the same unsafeCount field concurrently.
+        ExecutorService pool = Executors.newFixedThreadPool(50);
+        List<Future<?>> futures = new ArrayList<>();
+
+        // Fire off all 1000 increments so their read-sleep-write windows overlap.
+        for(int i = 0; i < tasks; i++){
+            Future<?> future = pool.submit(this::incrementUnsafe);
+            futures.add(future);
+        }
+
+        // Wait for every task to finish before reading the final count.
+        for(Future<?> future: futures){
+            try{
+                future.get();
+            }catch (ExecutionException ex){
+                //just ignore for demo
+            }
+        }
+
+        pool.shutdown();
+
+        // Expected == Actual only if increments never interleave. In practice,
+        // concurrent read-modify-write on a plain int loses updates, so
+        // actualCount ends up lower than tasks — those are the "lost updates".
+        return "Expected count: " + tasks + "\n"
+                + "Actual count:   " + unsafeCount + "\n"
+                + "Lost updates:   " + (tasks - unsafeCount) + "\n";
+    }
+
+
+
+
+
+
+
+
 
 }
