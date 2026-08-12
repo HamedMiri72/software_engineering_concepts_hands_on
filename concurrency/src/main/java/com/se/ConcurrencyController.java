@@ -4,12 +4,10 @@ package com.se;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.beans.IntrospectionException;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @RestController
 public class ConcurrencyController {
@@ -136,9 +134,169 @@ public class ConcurrencyController {
                 + "Lost updates:   " + (tasks - unsafeCount) + "\n";
     }
 
+    // Second counter for the "fixed" comparison: guarded by a lock instead of left bare.
+    private int syncCount = 0;
+    // Intrinsic lock (monitor). Any thread must acquire it before entering a
+    // "synchronized (lock)" block, so only one thread runs that block at a time.
+    private final Object lock = new Object();
+
+    // Third counter for the comparison: no locking needed, updates are atomic by construction.
+    private final AtomicInteger atomicCount = new AtomicInteger(0);
+
+    // Same read-sleep-write shape as incrementUnsafe(), but wrapped in a synchronized
+    // block so the whole read-modify-write happens as one uninterruptible unit per thread.
+    private void incrementSafe(){
+
+        // Block here until the lock is free, then hold it until this block exits.
+        synchronized (lock){
+            int current = syncCount;
+            try{
+                Thread.sleep(1);
+            }catch (InterruptedException ex){
+                Thread.currentThread().interrupt();
+            }
+            // No other thread could have changed syncCount between the read above and
+            // this write, because they were all blocked waiting for the lock.
+            syncCount = current  + 1;
+        }
+        // Lock auto-released as the synchronized block exits (even if an exception is thrown).
+    }
+
+    // incrementAndGet() is a single atomic hardware-level operation (CAS loop internally),
+    // so there's no read-modify-write window for another thread to land in.
+    private void incrementAtomic(){
+        atomicCount.incrementAndGet();
+    }
 
 
+    // Runs all three increment strategies back to back so their end results can be
+    // compared directly: unsafe should stay broken, the other two should be exact.
+    @GetMapping("/fixed")
+    public String fixed(){
 
+        // Reset every counter before each run of the comparison.
+        unsafeCount = 0;
+        syncCount = 0;
+        atomicCount.set(0);
+        int tasks = 1000;
+
+        // Control group: identical to /race, included here to show it's still broken.
+        runOnPool(tasks, this::incrementUnsafe);
+        // Lock-protected: every increment is serialized, so no updates get lost.
+        runOnPool(tasks, this::incrementSafe);
+        // Lock-free but still correct: hardware-atomic increment.
+        runOnPool(tasks, this::incrementAtomic);
+
+
+        return "Expected:            " + tasks + "\n"
+                + "unsafe (plain int):  " + unsafeCount + "   <- still broken\n"
+                + "synchronized:        " + syncCount + "   <- correct\n"
+                + "AtomicInteger:       " + atomicCount.get() + "   <- correct\n";
+
+    }
+
+    // Shared test harness: fires `tasks` copies of `job` at a fresh 50-thread pool and
+    // blocks until every one has completed before returning control to the caller.
+    private void runOnPool(int tasks, Runnable job){
+        ExecutorService pool = Executors.newFixedThreadPool(50);
+
+        List<Future<?>> futures = new ArrayList<>();
+
+        // Submit everything up front so all `tasks` runs overlap in time.
+        for(int i = 0; i < tasks; i++){
+            Future<?> future = pool.submit(job);
+            futures.add(future);
+        }
+
+        // Block on each Future in turn; by the time this loop finishes, every task has run.
+        for(Future<?> future: futures){
+            try{
+                future.get();
+            }catch (ExecutionException | InterruptedException ex){
+                //handle later
+            }
+        }
+
+        pool.shutdown();
+    }
+
+    // Same broken-vs-fixed comparison as /fixed, but for a Map instead of an int:
+    // plain HashMap under concurrent writes vs. ConcurrentHashMap.
+    @GetMapping("/map")
+    public String map() throws ExecutionException, IntrospectionException {
+
+        // Each of the 5 URLs gets its counter bumped this many times.
+        int tasksPerUrl = 200;
+
+        // Not thread-safe: concurrent put()s on the same key can race, same as unsafeCount.
+        Map<String, Integer> unsafeMap = new HashMap<>();
+        ExecutorService pool1 = Executors.newFixedThreadPool(50);
+
+        List<Future<?>> f1 = new ArrayList<>();
+
+        // One task per (repetition, URL) pair — tasksPerUrl * URLS.size() tasks total.
+        for(int i = 0; i < tasksPerUrl; i++){
+            for(String url: URLS){
+                Future<?> future = pool1.submit(() -> {
+                    // Read-then-put: two threads can read the same current value for a
+                    // key before either writes back, so one increment is silently lost.
+                    unsafeMap.put(url, unsafeMap.getOrDefault(url, 0) + 1);
+                });
+                f1.add(future);
+
+            }
+        }
+
+        // Wait for every unsafeMap writer to finish before moving on.
+        for(Future<?> future: f1){
+            try{
+                future.get();
+            }catch (InterruptedException e){
+                //handle later
+            }
+        }
+
+        pool1.shutdown();
+
+
+        // Thread-safe: merge() performs its read-modify-write atomically per key.
+        Map<String, Integer> safeMap = new ConcurrentHashMap<>();
+
+        ExecutorService pool2 = Executors.newFixedThreadPool(50);
+
+        List<Future<?>> f2 = new ArrayList<>();
+
+        // Identical workload to the unsafeMap run above, writing into safeMap instead.
+        for(int i = 0; i < tasksPerUrl; i++){
+            for(String url: URLS){
+                Future<?> future = pool2.submit(() -> {
+                    // merge() is atomic per key, so no other thread can interleave
+                    // between reading the current sum and writing the updated one.
+                    safeMap.merge(url, 1, Integer::sum);
+                });
+                f2.add(future);
+            }
+        }
+
+        // Wait for every safeMap writer to finish before reading final totals.
+        for(Future<?> future: f2){
+            try{
+                future.get();
+            }catch (InterruptedException ex){
+                //later
+            }
+        }
+
+        pool2.shutdown();
+
+        // unsafeMap counts typically land short of tasksPerUrl per URL (lost updates);
+        // safeMap counts should land exactly on tasksPerUrl for every URL.
+        return "Each URL was fetched " + tasksPerUrl + " times. Expected: " + tasksPerUrl + " each.\n\n"
+                + "HashMap (broken):\n" + unsafeMap + "\n\n"
+                + "ConcurrentHashMap (correct):\n" + safeMap + "\n";
+
+
+    }
 
 
 
