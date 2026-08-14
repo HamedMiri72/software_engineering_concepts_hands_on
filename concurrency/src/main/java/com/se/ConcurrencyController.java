@@ -297,7 +297,101 @@ public class ConcurrencyController {
 
     }
 
+    // Two independent locks. Deadlock happens not because locks are held, but
+    // because different threads acquire them in different orders.
+    private final Object lockA = new Object();
+    private final Object lockB = new Object();
 
+
+    // Classic deadlock: t1 grabs A then waits for B, while t2 grabs B then waits
+    // for A. Neither can proceed because each is holding what the other needs.
+    @GetMapping("/deadlock")
+    public String deadlock() throws ExecutionException, InterruptedException {
+
+        // Acquires A first, sleeps (giving t2 time to grab B), then tries for B.
+        Thread t1 = new Thread(() -> {
+            synchronized (lockA){
+                sleepQuality(100);
+                synchronized (lockB){
+                    // never reach
+                }
+            }
+        }, "thread-1");
+
+        // Acquires B first, sleeps, then tries for A — the opposite order to t1.
+        Thread t2 = new Thread(() -> {
+            synchronized (lockB){
+                sleepQuality(100);
+                synchronized (lockA){
+                    //never reach
+                }
+            }
+        }, "thread-2");
+
+        t1.start();
+        t2.start();
+
+        // join(3000) waits up to 3s for each thread to finish rather than blocking
+        // forever, so this endpoint can still return a response instead of hanging.
+        t1.join(3000);
+        t2.join(3000);
+
+        // If either thread is still running after the timeout, it's stuck waiting
+        // on a lock the other thread holds — that's the deadlock.
+        boolean stuck = t1.isAlive() || t2.isAlive();
+
+        return stuck
+                ? "DEADLOCK: both threads still frozen after 3s. In real life this hangs forever.\n"
+                : "Completed (no deadlock this run).\n";
+    }
+
+    // Same scenario as /deadlock, but both threads acquire the locks in the same
+    // order (A then B). With a consistent lock order, one thread always gets both
+    // locks and finishes before the other even starts waiting — no cycle, no deadlock.
+    @GetMapping("/deadlock-fixed")
+    public String deadlockFixed() throws InterruptedException{
+
+        Thread t1 = new Thread(() -> {
+            synchronized (lockA){
+                sleepQuality(100);
+                synchronized (lockB){
+
+                }
+            }
+        }, "thread-1");
+
+        // Note: t2 also takes A before B, unlike the broken version above.
+        Thread t2 = new Thread(() -> {
+            synchronized (lockA){
+                sleepQuality(100);
+                synchronized (lockB){
+
+                }
+            }
+        }, "thread-2");
+
+
+        t1.start();
+        t2.start();
+
+        t1.join(3000);
+        t2.join(3000);
+
+        boolean stuck = t1.isAlive() || t2.isAlive();
+
+        return stuck
+                ? "Still stuck (unexpected).\n"
+                : "Completed cleanly — same lock order means no deadlock.\n";
+    }
+
+    // Thread.sleep() wrapped so callers don't need their own try/catch boilerplate.
+    private void sleepQuality(long ms){
+        try{
+            Thread.sleep(ms);
+        }catch (InterruptedException ex){
+            Thread.currentThread().interrupt();
+        }
+    }
 
 
 
