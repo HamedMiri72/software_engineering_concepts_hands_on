@@ -8,6 +8,7 @@ complete isolation.
 | # | Concept | Folder | Port | Status |
 |---|---------|--------|------|--------|
 | 1 | Idempotency | [`idempotency/`](./idempotency) | 8080 | ✅ done |
+| 2 | Concurrency | [`concurrency/`](./concurrency) | 8081 | ✅ done |
 
 ## Run a single concept
 ```bash
@@ -15,4 +16,9 @@ cd idempotency
 docker compose up -d
 mvn spring-boot:run
 mvn test
+```
+
+`concurrency` has no external dependencies, so it can be run directly:
+```bash
+mvn -pl concurrency spring-boot:run
 ```
