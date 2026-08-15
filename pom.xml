@@ -14,5 +14,6 @@
     <modules>
         <module>idempotency</module>
         <module>concurrency</module>
+        <module>caching</module>
     </modules>
 </project>
